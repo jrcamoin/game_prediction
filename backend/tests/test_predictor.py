@@ -1,3 +1,6 @@
+import pytest
+from pydantic import ValidationError
+
 from app.models import PredictionRequest, TeamInput
 from app.predictor import predict_game
 
@@ -24,3 +27,16 @@ def test_market_odds_can_move_projection() -> None:
     )
 
     assert response.predicted_winner == "Away"
+
+
+def test_team_names_are_normalized_and_must_be_distinct() -> None:
+    with pytest.raises(ValidationError, match="must be different"):
+        PredictionRequest(
+            home_team=TeamInput(name="  Sharks  "),
+            away_team=TeamInput(name="sharks"),
+        )
+
+
+def test_blank_team_name_is_rejected() -> None:
+    with pytest.raises(ValidationError, match="team name cannot be blank"):
+        TeamInput(name="   ")
