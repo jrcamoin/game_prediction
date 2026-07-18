@@ -10,6 +10,9 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from app.models import DataSourceStatus, GameResult, GameSnapshot, PredictionRequest, Sport, TeamSnapshot
+from app.providers.golf import list_golf_matchups
+from app.providers.ufc import list_ufc_bouts
+from app.statbomb import statbomb_detail, statbomb_enabled, team_xg_profiles
 
 
 ESPN_BASE_URL = "https://site.api.espn.com/apis/site/v2/sports"
@@ -22,6 +25,9 @@ ESPN_LEAGUES: dict[Sport, tuple[str, str]] = {
     Sport.hockey: ("hockey", "nhl"),
     Sport.soccer: ("soccer", "usa.1"),
 }
+
+PROVIDER_SUPPORTED_SPORTS = {Sport.golf, Sport.ufc}
+SCHEDULE_SUPPORTED_SPORTS = set(ESPN_LEAGUES) | PROVIDER_SUPPORTED_SPORTS
 
 ODDS_SPORT_KEYS: dict[Sport, str] = {
     Sport.football: "americanfootball_nfl",
@@ -71,7 +77,29 @@ def source_statuses(odds_enabled: bool, odds_detail: str) -> list[DataSourceStat
     ]
 
 
+def unsupported_schedule_statuses(sport: Sport) -> list[DataSourceStatus]:
+    return [
+        DataSourceStatus(
+            name="Manual mode",
+            enabled=True,
+            detail=f"{sport.value.upper()} is available for manual predictions while live schedule integration is added.",
+        ),
+        DataSourceStatus(
+            name="ESPN scoreboard",
+            enabled=False,
+            detail="No home/away schedule adapter is configured for this sport yet.",
+        ),
+    ]
+
+
 def list_upcoming_games(sport: Sport, days: int = 14) -> list[GameSnapshot]:
+    if sport == Sport.golf:
+        return list_golf_matchups(days)
+    if sport == Sport.ufc:
+        return list_ufc_bouts(days)
+    if sport not in SCHEDULE_SUPPORTED_SPORTS:
+        return []
+
     history = _build_team_profiles(sport)
     odds = _fetch_odds_by_matchup(sport)
     game_date = datetime.now(UTC)
@@ -89,6 +117,9 @@ def list_upcoming_games(sport: Sport, days: int = 14) -> list[GameSnapshot]:
         home = _snapshot_from_competitor(competitors["home"], history, event_date)
         away = _snapshot_from_competitor(competitors["away"], history, event_date)
         _apply_odds(home, away, odds)
+        sources = source_statuses(bool(odds), _odds_detail(odds))
+        if sport == Sport.soccer:
+            _apply_statbomb_xg(home, away, sources)
 
         games.append(
             GameSnapshot(
@@ -102,7 +133,7 @@ def list_upcoming_games(sport: Sport, days: int = 14) -> list[GameSnapshot]:
                 venue_name=_venue_name(competition),
                 venue_city=_venue_city(competition),
                 venue_state=_venue_state(competition),
-                sources=source_statuses(bool(odds), _odds_detail(odds)),
+                sources=sources,
             )
         )
 
@@ -117,6 +148,8 @@ def build_prediction_request_from_game(sport: Sport, game_id: str) -> GameSnapsh
 
 
 def resolve_game_result(sport: Sport, game_id: str) -> GameResult | None:
+    if sport not in SCHEDULE_SUPPORTED_SPORTS:
+        return None
     events = _fetch_events(sport, days=30, direction="future") + _fetch_events(sport, days=365, direction="past")
     for event in events:
         if str(event.get("id", "")) != game_id:
@@ -235,6 +268,8 @@ def _build_team_profiles(sport: Sport, days: int = 210) -> dict[str, TeamProfile
 
 
 def _fetch_events(sport: Sport, days: int, direction: str) -> list[dict]:
+    if sport not in SCHEDULE_SUPPORTED_SPORTS:
+        return []
     today = datetime.now(UTC).date()
     start = today if direction == "future" else today - timedelta(days=days)
     end = today + timedelta(days=days) if direction == "future" else today - timedelta(days=1)
@@ -247,7 +282,7 @@ def _fetch_events(sport: Sport, days: int, direction: str) -> list[dict]:
 
 def _fetch_odds_by_matchup(sport: Sport) -> dict[tuple[str, str], tuple[int | None, int | None]]:
     api_key = os.getenv("ODDS_API_KEY")
-    if not api_key:
+    if not api_key or sport not in ODDS_SPORT_KEYS:
         return {}
 
     sport_key = ODDS_SPORT_KEYS[sport]
@@ -322,6 +357,35 @@ def _apply_odds(
     if home_moneyline is not None or away_moneyline is not None:
         home.source = "ESPN scoreboard + The Odds API"
         away.source = "ESPN scoreboard + The Odds API"
+
+
+def _apply_statbomb_xg(home: TeamSnapshot, away: TeamSnapshot, sources: list[DataSourceStatus]) -> None:
+    profiles = team_xg_profiles()
+    home_profile = profiles.get(_normalize_team_name(home.name))
+    away_profile = profiles.get(_normalize_team_name(away.name))
+    if home_profile and away_profile:
+        home.expected_value_for = home_profile.xg_for
+        home.expected_value_against = home_profile.xg_against
+        away.expected_value_for = away_profile.xg_for
+        away.expected_value_against = away_profile.xg_against
+        home.source = f"{home.source} + StatsBomb xG"
+        away.source = f"{away.source} + StatsBomb xG"
+        sources.append(
+            DataSourceStatus(
+                name="StatsBomb open data",
+                enabled=True,
+                detail=f"xG profiles matched for both teams from {home_profile.matches + away_profile.matches} team-match samples.",
+            )
+        )
+        return
+
+    sources.append(
+        DataSourceStatus(
+            name="StatsBomb open data",
+            enabled=False,
+            detail=statbomb_detail() if statbomb_enabled() else "Optional soccer xG enrichment is not configured.",
+        )
+    )
 
 
 def _profile_for_competitor(profiles: dict[str, TeamProfile], competitor: dict) -> TeamProfile:

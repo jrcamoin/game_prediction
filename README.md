@@ -1,46 +1,72 @@
-<<<<<<< HEAD
-# game_prediction
-Webapp to predict upcoming sporting events
-=======
 # Sports Game Winner Predictor
 
-Initial codebase for a web app that predicts likely winners of sports games.
+Web app for predicting upcoming sporting events.
 
-The app has:
+The app includes:
 
-- `backend/`: FastAPI service with a prediction endpoint.
-- `frontend/`: React + Vite UI for entering game inputs and viewing predictions.
-- Live-game mode with ESPN-backed schedules, recent form, generated ratings, top picks, and saved prediction tracking.
-- Retention features: local profiles, favorite teams/leagues, a personalized daily feed, notification preferences, searchable history, dark mode, and shareable predictions.
-- Smarter prediction features: ensemble model output, calibrated confidence, feature importance, lineup/injury context, optional venue weather, advanced ratings, and season simulations.
-- Live second-screen experience: live score polling, in-game win probability, momentum, event timeline, player stats, and expected points/runs notes from ESPN live summary data.
-- Community features: public profiles, following, game comments, weekly contests, leaderboard scoring, challenges, badges, and achievements.
-- Premium prototype features: Pro plan flag, premium analysis, historical model performance, CSV export, value analytics when odds are configured, and ad-free/premium feature gates.
-
-The first model is intentionally transparent and deterministic. It combines team rating, recent form, injuries, rest days, home field, travel, and optional market odds into a win probability. This is a practical baseline that can later be replaced or calibrated with historical game data.
-
-The app can also build predictions from real upcoming games. It uses ESPN scoreboard data for schedules, teams, scores, venue flags, and recent results. If `ODDS_API_KEY` is set, it also attempts to merge head-to-head moneyline odds from The Odds API.
-
-Outdoor live-game predictions attempt to enrich selected games with venue weather from Open-Meteo when ESPN venue location data can be geocoded.
+- `backend/`: FastAPI service with prediction, live game, community, premium, and history endpoints.
+- `frontend/`: React + Vite UI for selecting games, running predictions, and reviewing results.
+- SQLite-backed local profiles, favorites, prediction history, comments, contests, and premium prototype state.
+- First-class prediction support for football, basketball, baseball, hockey, soccer, golf, and UFC.
+- Optional soccer xG enrichment from StatsBomb open data.
+- File-backed golf matchup and UFC fight-card providers with sample fallbacks for local development.
+- A stacked tree ensemble slot that can be replaced with a trained XGBoost artifact once historical training data is available.
+- A product-style dashboard shell with sport readiness, model status, account, community, premium, and history sections.
+- GitHub Actions CI for backend tests and frontend builds.
 
 ## Requirements
 
-- Python 3.11+
-- Node.js 20+
+- Python 3.12 is recommended for the backend.
+- Node.js 20+ is recommended for the frontend.
 
-## Run The Backend
+Python 3.14 is not currently supported by the pinned backend dependency stack because `pydantic-core==2.33.2` does not provide compatible support for it.
+
+## First-Time Setup
+
+Install frontend packages:
+
+```bash
+cd frontend
+npm install
+```
+
+Create the backend virtualenv with Python 3.12 and install packages:
 
 ```bash
 cd backend
-python3 -m venv .venv
+/Library/Frameworks/Python.framework/Versions/3.12/bin/python3.12 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+```
+
+If your Python 3.12 is on your `PATH`, this shorter command also works:
+
+```bash
+python3.12 -m venv .venv
+```
+
+## Run Locally
+
+Start the backend in one terminal:
+
+```bash
+cd backend
+source .venv/bin/activate
 uvicorn app.main:app --reload --port 8000
 ```
 
-API docs will be available at `http://localhost:8000/docs`.
+The API docs will be available at `http://localhost:8000/docs`.
 
-### Optional Odds Source
+Start the frontend in a second terminal:
+
+```bash
+cd frontend
+npm start
+```
+
+The frontend runs at `http://localhost:5173` and calls the backend at `http://localhost:8000`.
+
+## Optional Odds Source
 
 ```bash
 export ODDS_API_KEY=your_api_key
@@ -49,36 +75,109 @@ export ODDS_REGIONS=us
 
 Without an odds key, live predictions still work from ESPN data and the market factor remains neutral.
 
-## Test The Backend
+## Optional StatsBomb Soccer xG
+
+StatsBomb open data can enrich soccer predictions with team xG-for and xG-against profiles. The preferred local setup is to clone or download the StatsBomb open-data repository and point the backend to its `data` folder:
+
+```bash
+export STATBOMB_OPEN_DATA_DIR=/path/to/statsbomb/open-data/data
+```
+
+You can limit load time with:
+
+```bash
+export STATBOMB_COMPETITION_IDS=16,43
+export STATBOMB_SEASON_IDS=4,3
+export STATBOMB_MAX_MATCHES=250
+```
+
+For quick experiments without a local clone:
+
+```bash
+export STATBOMB_ENABLE_REMOTE=1
+```
+
+Remote mode fetches raw JSON from GitHub and should be treated as slower and less reliable than a local data folder.
+
+Manual predictions can also use the `expected_value_for` and `expected_value_against` team fields. For soccer, treat those as xG. For golf or UFC, use them as your sport-specific expected-output metric until dedicated provider adapters are added.
+
+## Optional Golf And UFC Feeds
+
+Golf and UFC now use file-backed schedule providers. If no file is configured, the backend exposes sample local matchups so the full real-game flow still works.
+
+```bash
+export GOLF_EVENTS_JSON=/path/to/golf-events.json
+export UFC_EVENTS_JSON=/path/to/ufc-events.json
+```
+
+Each JSON file may be a list or an object with an `events` list. Use fields like `id`, `date`, `name`, `home_name`, `away_name`, `home_rating`, `away_rating`, `home_moneyline`, `away_moneyline`, `home_expected_value_for`, and `away_expected_value_against`.
+
+## Optional Auth Token
+
+For deployed environments, set a shared bearer token:
+
+```bash
+export APP_AUTH_TOKEN=change-me
+```
+
+The current app exposes `GET /api/auth/session` as an integration point. Local development works without a token.
+
+## Optional Trained XGBoost Model
+
+The running app uses a deterministic stacked-tree scaffold unless a trained artifact is configured:
+
+```bash
+export XGBOOST_MODEL_PATH=/path/to/xgboost_win_model.joblib
+```
+
+To train an artifact from a prepared historical feature CSV:
 
 ```bash
 cd backend
-python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements-model.txt
+python scripts/train_xgboost.py --input data/training/win_features.csv --output artifacts/xgboost_win_model.joblib
+```
+
+The training CSV must include:
+
+```text
+rating_edge, advanced_rating_edge, expected_value_edge, recent_form_edge, injury_edge,
+lineup_edge, rest_edge, venue_edge, travel_edge, market_edge, weather_edge, home_won
+```
+
+Set `XGBOOST_MODEL_PATH` after training so `/api/model/status` can report the artifact as active.
+
+## Test And Build
+
+Backend tests:
+
+```bash
+cd backend
 source .venv/bin/activate
 pip install -r requirements-dev.txt
 python -m pytest tests
 ```
 
-## Run The Frontend
-
-```bash
-cd frontend
-npm install
-npm start
-```
-
-The frontend runs at `http://localhost:5173` and calls the backend at `http://localhost:8000`.
-
-Build the frontend with:
+Frontend production build:
 
 ```bash
 cd frontend
 npm run build
 ```
 
+CI runs both checks through `.github/workflows/ci.yml`.
+
+## Deployment Configs
+
+- `render.yaml` defines a Render backend service.
+- `frontend/vercel.json` defines a Vercel frontend build.
+
 ## Useful Endpoints
 
 - `GET /health`
+- `GET /api/auth/session`
+- `GET /api/model/status`
 - `GET /api/games/upcoming?sport=baseball&days=14`
 - `GET /api/games/recommendations?sport=baseball&days=14&limit=5`
 - `POST /api/predict`
@@ -97,14 +196,6 @@ npm run build
 - `GET /api/simulations/season?sport=baseball&days=30&simulations=1000`
 - `GET /api/live/{sport}/{game_id}`
 - `GET /api/community`
-- `GET /api/community/profiles`
-- `POST /api/community/follows`
-- `GET /api/community/comments/{sport}/{game_id}`
-- `POST /api/community/comments`
-- `GET /api/community/contests`
-- `POST /api/community/contests/{contest_id}/entries`
-- `GET /api/community/leaderboard`
-- `GET /api/community/challenges`
 - `GET /api/premium/features/{user_id}`
 - `POST /api/premium/upgrade/{user_id}`
 - `GET /api/premium/performance?user_id={user_id}`
@@ -112,32 +203,8 @@ npm run build
 - `GET /api/premium/analysis/{sport}/{game_id}?user_id={user_id}`
 - `GET /api/premium/export/predictions.csv?user_id={user_id}`
 
-## Retention Notes
+## Notes
 
 Profiles, favorites, notification preferences, and prediction history are stored in local SQLite at `backend/data/game_predictor.sqlite3` by default. Set `GAME_PREDICTOR_DB` to use a different path.
 
-Email and push notifications are currently preference-tracking only. Real delivery should be connected after choosing a production auth, email, and push provider.
-
-Community features are local-prototype features backed by SQLite. Production community launch needs real authentication, moderation tools, anti-spam controls, and privacy settings before exposing comments or public profiles broadly.
-
-Premium features are local plan-gated prototypes. Production monetization needs a billing provider, entitlement checks on every protected route, usage limits, invoices, cancellation flows, and terms/compliance review. Betting value analytics is informational only and should only be shown where legally appropriate.
-
-## Next Steps
-
-- Add user accounts, saved leagues, and cloud-hosted persistence.
-- Replace local profiles with production authentication.
-- Connect real email and push notification delivery.
-- Calibrate sport-specific Elo weights against historical results.
-- Add a dedicated injuries/lineups source and travel-distance calculation.
-- Train sport-specific models and calibrate probabilities.
-<<<<<<< HEAD
-- Add authentication and saved leagues.
->>>>>>> d626e53 (Initial sports prediction webapp)
-=======
-- Add closing-line value and sportsbook comparison views when odds are configured.
-- Replace fallback live win probability with sport-specific trained in-game models.
-- Add a dedicated xG/xPoints provider for sports where ESPN does not expose expected-value data.
-- Add production moderation, blocking/reporting, and private profile controls for community features.
-- Integrate Stripe or another billing provider for real premium subscriptions.
-- Add server-side usage limits for free users and audit logging for premium entitlement checks.
->>>>>>> 6676c6b (initial commit to the game predictor app, phase 1-6)
+Betting analytics are informational only and not financial advice. Use only where legal.

@@ -10,6 +10,7 @@ import type {
   Favorite,
   FavoriteCreate,
   LiveGameState,
+  ModelStatus,
   NotificationPreferences,
   ModelPerformanceReport,
   PredictionRequest,
@@ -49,6 +50,15 @@ export async function predictGame(payload: PredictionRequest): Promise<Predictio
 
 export async function fetchUpcomingGames(sport: Sport): Promise<GameSnapshot[]> {
   const response = await fetch(`${API_BASE_URL}/api/games/upcoming?sport=${sport}&days=30`);
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response));
+  }
+
+  return response.json();
+}
+
+export async function fetchModelStatus(): Promise<ModelStatus> {
+  const response = await fetch(`${API_BASE_URL}/api/model/status`);
   if (!response.ok) {
     throw new Error(await readErrorMessage(response));
   }

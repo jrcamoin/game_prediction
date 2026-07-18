@@ -1,4 +1,4 @@
-export type Sport = "football" | "basketball" | "baseball" | "hockey" | "soccer";
+export type Sport = "football" | "basketball" | "baseball" | "hockey" | "soccer" | "golf" | "ufc";
 export type Plan = "free" | "pro";
 
 export type TeamInput = {
@@ -12,6 +12,8 @@ export type TeamInput = {
   projected_starters: number;
   rest_days: number;
   moneyline: number | null;
+  expected_value_for?: number | null;
+  expected_value_against?: number | null;
 };
 
 export type PredictionRequest = {
@@ -65,6 +67,24 @@ export type DataSourceStatus = {
   name: string;
   enabled: boolean;
   detail: string;
+};
+
+export type SportCapability = {
+  sport: Sport;
+  live_schedule: boolean;
+  live_state: boolean;
+  odds: boolean;
+  expected_value: boolean;
+  trained_model: boolean;
+  model_name: string;
+  notes: string[];
+};
+
+export type ModelStatus = {
+  active_model: string;
+  trained_artifact_path: string | null;
+  trained_artifact_loaded: boolean;
+  capabilities: SportCapability[];
 };
 
 export type TeamSnapshot = TeamInput & {

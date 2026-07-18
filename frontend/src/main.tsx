@@ -27,6 +27,7 @@ import {
   fetchFavorites,
   fetchGameComments,
   fetchLiveGameState,
+  fetchModelStatus,
   fetchPremiumAnalysis,
   fetchPremiumFeatures,
   fetchPremiumPerformance,
@@ -57,6 +58,7 @@ import type {
   GameSnapshot,
   LiveGameState,
   LiveTeamScore,
+  ModelStatus,
   NotificationPreferences,
   ModelPerformanceReport,
   PredictionRequest,
@@ -71,9 +73,10 @@ import type {
   TeamInput,
   UserProfile,
 } from "./types";
+import { ModelReadiness, SportInsight } from "./components/ModelPanels";
 import "./styles.css";
 
-const sports: Sport[] = ["football", "basketball", "baseball", "hockey", "soccer"];
+const sports: Sport[] = ["football", "basketball", "baseball", "hockey", "soccer", "golf", "ufc"];
 
 const defaultHome: TeamInput = {
   name: "Home Team",
@@ -177,6 +180,76 @@ const scenarios: Scenario[] = [
     home_travel_miles: 420,
     away_travel_miles: 390,
   },
+  {
+    label: "Golf head-to-head",
+    sport: "golf",
+    home_team: {
+      name: "Player A",
+      rating: 1585,
+      recent_wins: 4,
+      recent_losses: 1,
+      injuries: 0,
+      questionable_players: 0,
+      starters_confirmed: 1,
+      projected_starters: 1,
+      rest_days: 5,
+      moneyline: -125,
+      expected_value_for: 1.4,
+      expected_value_against: 0.8,
+    },
+    away_team: {
+      name: "Player B",
+      rating: 1540,
+      recent_wins: 3,
+      recent_losses: 2,
+      injuries: 1,
+      questionable_players: 0,
+      starters_confirmed: 1,
+      projected_starters: 1,
+      rest_days: 5,
+      moneyline: 105,
+      expected_value_for: 1.1,
+      expected_value_against: 1.0,
+    },
+    neutral_site: true,
+    home_travel_miles: 700,
+    away_travel_miles: 900,
+  },
+  {
+    label: "UFC bout",
+    sport: "ufc",
+    home_team: {
+      name: "Fighter Red",
+      rating: 1600,
+      recent_wins: 4,
+      recent_losses: 1,
+      injuries: 0,
+      questionable_players: 0,
+      starters_confirmed: 1,
+      projected_starters: 1,
+      rest_days: 7,
+      moneyline: -150,
+      expected_value_for: 2.2,
+      expected_value_against: 1.4,
+    },
+    away_team: {
+      name: "Fighter Blue",
+      rating: 1565,
+      recent_wins: 3,
+      recent_losses: 2,
+      injuries: 0,
+      questionable_players: 1,
+      starters_confirmed: 1,
+      projected_starters: 1,
+      rest_days: 7,
+      moneyline: 130,
+      expected_value_for: 1.8,
+      expected_value_against: 1.7,
+    },
+    neutral_site: true,
+    home_travel_miles: 200,
+    away_travel_miles: 1200,
+  },
 ];
 
 function App() {
@@ -195,6 +268,7 @@ function App() {
   const [premiumPerformance, setPremiumPerformance] = useState<ModelPerformanceReport | null>(null);
   const [valuePicks, setValuePicks] = useState<BettingValuePick[]>([]);
   const [premiumAnalysis, setPremiumAnalysis] = useState<PremiumAnalysis | null>(null);
+  const [modelStatus, setModelStatus] = useState<ModelStatus | null>(null);
   const [comments, setComments] = useState<GameComment[]>([]);
   const [commentBody, setCommentBody] = useState("");
   const [seasonSimulation, setSeasonSimulation] = useState<SeasonSimulation | null>(null);
@@ -238,6 +312,7 @@ function App() {
     [games, selectedGameId],
   );
   const activeUser = users.find((user) => user.id === activeUserId) ?? null;
+  const sportCapability = modelStatus?.capabilities.find((capability) => capability.sport === sport) ?? null;
 
   useEffect(() => {
     document.documentElement.dataset.theme = darkMode ? "dark" : "light";
@@ -246,6 +321,7 @@ function App() {
 
   useEffect(() => {
     void refreshUsers();
+    void refreshModelStatus();
   }, []);
 
   useEffect(() => {
@@ -382,6 +458,14 @@ function App() {
       }
     } catch {
       setUsers([]);
+    }
+  }
+
+  async function refreshModelStatus() {
+    try {
+      setModelStatus(await fetchModelStatus());
+    } catch {
+      setModelStatus(null);
     }
   }
 
@@ -562,65 +646,50 @@ function App() {
 
   return (
     <main className="app-shell">
-      <section className="topbar">
-        <div>
+      <section className="hero-shell">
+        <div className="topbar">
+          <div className="hero-copy">
           <p className="eyebrow">Sports model workspace</p>
           <h1>Game Winner Predictor</h1>
+            <p>
+              Compare live matchups, inspect model drivers, and track prediction performance from one focused
+              betting-research workspace.
+            </p>
+          </div>
+          <div className="topbar-actions">
+            <button className="icon-button" onClick={() => setDarkMode(!darkMode)} aria-label="Toggle dark mode">
+              {darkMode ? <Sun size={18} /> : <Moon size={18} />}
+            </button>
+            <button className="primary-button" onClick={handlePredict} disabled={isLoading}>
+              {isLoading ? <Loader2 className="spin" size={18} /> : <Activity size={18} />}
+              Predict
+            </button>
+          </div>
         </div>
-        <div className="topbar-actions">
-          <button className="icon-button" onClick={() => setDarkMode(!darkMode)} aria-label="Toggle dark mode">
-            {darkMode ? <Sun size={18} /> : <Moon size={18} />}
-          </button>
-          <button className="primary-button" onClick={handlePredict} disabled={isLoading}>
-            {isLoading ? <Loader2 className="spin" size={18} /> : <Activity size={18} />}
-            Predict
-          </button>
+
+        <div className="hero-metrics" aria-label="Workspace summary">
+          <Metric label="Mode" value={mode === "real" ? "Live games" : "Manual"} />
+          <Metric label="Profile" value={activeUser?.display_name ?? "Guest"} />
+          <Metric label="Selected" value={selectedGame?.name ?? `${awayTeam.name} at ${homeTeam.name}`} />
+          <Metric label="Tracked" value={String(summary?.total ?? 0)} />
         </div>
       </section>
 
-      <AccountPanel
-        users={users}
-        activeUser={activeUser}
-        activeUserId={activeUserId}
-        profileName={profileName}
-        profileEmail={profileEmail}
-        favorites={favorites}
-        selectedGame={selectedGame}
-        dailyFeed={dailyFeed}
-        onSelectUser={setActiveUserId}
-        onNameChange={setProfileName}
-        onEmailChange={setProfileEmail}
-        onCreateProfile={handleCreateProfile}
-        onFavoriteTeam={handleFavoriteSelectedTeam}
-        onRemoveFavorite={handleRemoveFavorite}
-        onUpdateNotifications={handleUpdateNotifications}
-      />
+      <nav className="product-nav" aria-label="Primary sections">
+        <a href="#predict">Predict</a>
+        <a href="#sports">Sports</a>
+        <a href="#account">Account</a>
+        <a href="#premium">Model</a>
+        <a href="#community">Community</a>
+        <a href="#history">History</a>
+      </nav>
 
-      <CommunityPanel
-        community={community}
-        activeUserId={activeUserId}
-        comments={comments}
-        commentBody={commentBody}
-        selectedGame={selectedGame}
-        history={history}
-        onCommentChange={setCommentBody}
-        onAddComment={handleAddComment}
-        onFollow={handleFollowUser}
-        onUnfollow={handleUnfollowUser}
-        onEnterContest={handleEnterContest}
-        onRefresh={refreshCommunity}
-      />
+      <section id="sports" className="intelligence-grid">
+        <SportInsight sport={sport} capability={sportCapability} />
+        <ModelReadiness status={modelStatus} capability={sportCapability} onRefresh={refreshModelStatus} />
+      </section>
 
-      <PremiumPanel
-        activeUser={activeUser}
-        features={premiumFeatures}
-        performance={premiumPerformance}
-        valuePicks={valuePicks}
-        analysis={premiumAnalysis}
-        onUpgrade={handleUpgradeToPro}
-      />
-
-      <section className="workspace">
+      <section id="predict" className="workspace">
         <div className="input-panel">
           <div className="mode-tabs" role="tablist" aria-label="Prediction mode">
             <button className={mode === "real" ? "active" : ""} type="button" onClick={() => setMode("real")}>
@@ -668,7 +737,12 @@ function App() {
               id="sport"
               value={sport}
               onChange={(event) => {
-                setSport(event.target.value as Sport);
+                const nextSport = event.target.value as Sport;
+                const nextCapability = modelStatus?.capabilities.find((capability) => capability.sport === nextSport);
+                setSport(nextSport);
+                if (nextCapability && !nextCapability.live_schedule) {
+                  setMode("manual");
+                }
                 setPrediction(null);
               }}
             >
@@ -727,6 +801,48 @@ function App() {
           sources={sourceStatuses}
         />
       </section>
+
+      <AccountPanel
+        users={users}
+        activeUser={activeUser}
+        activeUserId={activeUserId}
+        profileName={profileName}
+        profileEmail={profileEmail}
+        favorites={favorites}
+        selectedGame={selectedGame}
+        dailyFeed={dailyFeed}
+        onSelectUser={setActiveUserId}
+        onNameChange={setProfileName}
+        onEmailChange={setProfileEmail}
+        onCreateProfile={handleCreateProfile}
+        onFavoriteTeam={handleFavoriteSelectedTeam}
+        onRemoveFavorite={handleRemoveFavorite}
+        onUpdateNotifications={handleUpdateNotifications}
+      />
+
+      <PremiumPanel
+        activeUser={activeUser}
+        features={premiumFeatures}
+        performance={premiumPerformance}
+        valuePicks={valuePicks}
+        analysis={premiumAnalysis}
+        onUpgrade={handleUpgradeToPro}
+      />
+
+      <CommunityPanel
+        community={community}
+        activeUserId={activeUserId}
+        comments={comments}
+        commentBody={commentBody}
+        selectedGame={selectedGame}
+        history={history}
+        onCommentChange={setCommentBody}
+        onAddComment={handleAddComment}
+        onFollow={handleFollowUser}
+        onUnfollow={handleUnfollowUser}
+        onEnterContest={handleEnterContest}
+        onRefresh={refreshCommunity}
+      />
 
       <SimulationPanel simulation={seasonSimulation} />
 
@@ -791,7 +907,7 @@ function PremiumPanel({
 }) {
   const isPro = features?.plan === "pro";
   return (
-    <section className="premium-panel">
+    <section id="premium" className="premium-panel">
       <div className="panel-header">
         <div>
           <p className="eyebrow">Premium</p>
@@ -887,7 +1003,7 @@ function CommunityPanel({
   onRefresh,
 }: CommunityPanelProps) {
   return (
-    <section className="community-panel">
+    <section id="community" className="community-panel">
       <div className="panel-header">
         <div>
           <p className="eyebrow">Community</p>
@@ -1144,7 +1260,7 @@ function HistoryPanel({
   onRefresh,
 }: HistoryPanelProps) {
   return (
-    <section className="history-panel">
+    <section id="history" className="history-panel">
       <div className="panel-header">
         <div>
           <p className="eyebrow">Tracking</p>
@@ -1258,7 +1374,7 @@ function AccountPanel({
   onUpdateNotifications,
 }: AccountPanelProps) {
   return (
-    <section className="retention-grid">
+    <section id="account" className="retention-grid">
       <div className="account-card">
         <div className="panel-header">
           <div>
@@ -1473,6 +1589,22 @@ function TeamForm({ title, team, onChange }: TeamFormProps) {
           min={-5000}
           max={5000}
         />
+        <NumberField
+          label="Expected value for"
+          value={team.expected_value_for ?? 0}
+          onChange={(value) => update("expected_value_for", value === 0 ? null : value)}
+          min={0}
+          max={20}
+          step={0.1}
+        />
+        <NumberField
+          label="Expected value against"
+          value={team.expected_value_against ?? 0}
+          onChange={(value) => update("expected_value_against", value === 0 ? null : value)}
+          min={0}
+          max={20}
+          step={0.1}
+        />
       </div>
     </div>
   );
@@ -1484,9 +1616,10 @@ type NumberFieldProps = {
   onChange: (value: number) => void;
   min: number;
   max: number;
+  step?: number;
 };
 
-function NumberField({ label, value, onChange, min, max }: NumberFieldProps) {
+function NumberField({ label, value, onChange, min, max, step = 1 }: NumberFieldProps) {
   const id = label.toLowerCase().replace(/\s+/g, "-");
   return (
     <div className="field-group">
@@ -1497,6 +1630,7 @@ function NumberField({ label, value, onChange, min, max }: NumberFieldProps) {
         value={value}
         min={min}
         max={max}
+        step={step}
         onChange={(event) => onChange(Number(event.target.value))}
       />
     </div>

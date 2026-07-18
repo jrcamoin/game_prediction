@@ -1,6 +1,7 @@
 from math import exp
 
 from app.models import FactorBreakdown, FeatureImportance, ModelPrediction, PredictionRequest, PredictionResponse, Sport, TeamInput
+from app.trained_model import trained_probability
 
 
 HOME_FIELD_BY_SPORT: dict[Sport, float] = {
@@ -9,6 +10,8 @@ HOME_FIELD_BY_SPORT: dict[Sport, float] = {
     Sport.baseball: 30.0,
     Sport.hockey: 35.0,
     Sport.soccer: 50.0,
+    Sport.golf: 0.0,
+    Sport.ufc: 0.0,
 }
 
 
@@ -40,6 +43,7 @@ def _factor_breakdown(request: PredictionRequest) -> FactorBreakdown:
     return FactorBreakdown(
         rating=(request.home_team.rating - request.away_team.rating) * 0.018,
         advanced_rating=(request.home_team.rating - request.away_team.rating) * 0.008,
+        expected_value=_expected_value_edge(request.home_team, request.away_team),
         recent_form=_recent_form_edge(request.home_team, request.away_team),
         injuries=(request.away_team.injuries - request.home_team.injuries) * 0.18
         + (request.away_team.questionable_players - request.home_team.questionable_players) * 0.06,
@@ -53,17 +57,33 @@ def _factor_breakdown(request: PredictionRequest) -> FactorBreakdown:
 
 
 def _ensemble_predictions(request: PredictionRequest, factors: FactorBreakdown) -> list[ModelPrediction]:
-    rating_form_score = factors.rating + factors.advanced_rating + factors.recent_form + factors.venue
-    market_score = factors.market + factors.rating * 0.35 + factors.venue * 0.3
-    availability_score = factors.injuries + factors.lineup + factors.rest + factors.travel + factors.weather + factors.rating * 0.25
+    rating_form_score = factors.rating + factors.advanced_rating + factors.expected_value * 0.65 + factors.recent_form + factors.venue
+    market_score = factors.market + factors.rating * 0.35 + factors.expected_value * 0.2 + factors.venue * 0.3
+    availability_score = (
+        factors.injuries
+        + factors.lineup
+        + factors.rest
+        + factors.travel
+        + factors.weather
+        + factors.expected_value * 0.3
+        + factors.rating * 0.25
+    )
+    tree_score = _stacked_tree_score(request, factors)
+    trained_tree_probability = trained_probability(factors)
     market_weight = 0.28 if request.home_team.moneyline is not None and request.away_team.moneyline is not None else 0.12
-    rating_weight = 0.48 if market_weight < 0.2 else 0.4
-    availability_weight = 1 - rating_weight - market_weight
+    tree_weight = 0.22
+    rating_weight = 0.38 if market_weight < 0.2 else 0.32
+    availability_weight = 1 - rating_weight - market_weight - tree_weight
 
     return [
         ModelPrediction(name="Rating + form", home_win_probability=round(_sigmoid(rating_form_score), 4), weight=round(rating_weight, 2)),
         ModelPrediction(name="Market-aware", home_win_probability=round(_sigmoid(market_score), 4), weight=round(market_weight, 2)),
         ModelPrediction(name="Availability + context", home_win_probability=round(_sigmoid(availability_score), 4), weight=round(availability_weight, 2)),
+        ModelPrediction(
+            name="Trained XGBoost stack" if trained_tree_probability is not None else "Stacked tree model",
+            home_win_probability=round(trained_tree_probability if trained_tree_probability is not None else _sigmoid(tree_score), 4),
+            weight=round(tree_weight, 2),
+        ),
     ]
 
 
@@ -91,6 +111,68 @@ def _lineup_edge(home_team: TeamInput, away_team: TeamInput) -> float:
     home_rate = home_team.starters_confirmed / max(home_team.projected_starters, 1)
     away_rate = away_team.starters_confirmed / max(away_team.projected_starters, 1)
     return (home_rate - away_rate) * 0.22
+
+
+def _expected_value_edge(home_team: TeamInput, away_team: TeamInput) -> float:
+    if (
+        home_team.expected_value_for is None
+        or home_team.expected_value_against is None
+        or away_team.expected_value_for is None
+        or away_team.expected_value_against is None
+    ):
+        return 0
+
+    home_net = home_team.expected_value_for - home_team.expected_value_against
+    away_net = away_team.expected_value_for - away_team.expected_value_against
+    return max(-1.2, min(1.2, (home_net - away_net) * 0.42))
+
+
+def _stacked_tree_score(request: PredictionRequest, factors: FactorBreakdown) -> float:
+    """Deterministic tree stack placeholder for a future trained XGBoost artifact."""
+    tree_outputs = [
+        _tree_rating_context(factors),
+        _tree_market_availability(request, factors),
+        _tree_sport_specific(request, factors),
+    ]
+    return sum(tree_outputs) / len(tree_outputs)
+
+
+def _tree_rating_context(factors: FactorBreakdown) -> float:
+    score = 0.0
+    if factors.rating > 1.8:
+        score += 0.95
+    elif factors.rating > 0.45:
+        score += 0.35
+    elif factors.rating < -1.8:
+        score -= 0.95
+    elif factors.rating < -0.45:
+        score -= 0.35
+
+    if factors.recent_form > 0.25:
+        score += 0.18
+    elif factors.recent_form < -0.25:
+        score -= 0.18
+    return score + factors.venue * 0.25
+
+
+def _tree_market_availability(request: PredictionRequest, factors: FactorBreakdown) -> float:
+    score = factors.market * 0.85 + factors.injuries * 0.45 + factors.lineup * 0.35
+    if request.home_team.moneyline is None or request.away_team.moneyline is None:
+        score += factors.rating * 0.18
+    if abs(factors.market) > 0.4 and factors.market * factors.rating < 0:
+        score *= 0.72
+    return score
+
+
+def _tree_sport_specific(request: PredictionRequest, factors: FactorBreakdown) -> float:
+    score = factors.expected_value * 0.9 + factors.rest * 0.25 + factors.travel * 0.18 + factors.weather * 0.4
+    if request.sport == Sport.ufc:
+        score += factors.injuries * 0.3
+    if request.sport == Sport.golf:
+        score += factors.advanced_rating * 0.55
+    if request.sport == Sport.soccer and abs(factors.expected_value) > 0.35:
+        score += factors.expected_value * 0.35
+    return score
 
 
 def _weather_edge(request: PredictionRequest) -> float:
@@ -163,7 +245,15 @@ def _feature_importance(factors: FactorBreakdown) -> list[FeatureImportance]:
 
 
 def _model_notes(request: PredictionRequest) -> list[str]:
-    notes = ["Probabilities are calibrated by shrinking ensemble outputs toward 50% until historical calibration is added."]
+    notes = [
+        "Probabilities are calibrated by shrinking ensemble outputs toward 50% until historical calibration is added.",
+    ]
+    if trained_probability(_factor_breakdown(request)) is None:
+        notes.append("Stacked tree model is a deterministic boosted-tree scaffold; set XGBOOST_MODEL_PATH to use a trained artifact.")
+    else:
+        notes.append("Trained XGBoost artifact is active in the ensemble.")
+    if request.home_team.expected_value_for is not None and request.away_team.expected_value_for is not None:
+        notes.append("Sport-specific expected-value data is included in the ensemble.")
     if request.weather is not None:
         notes.append(f"Weather included: {request.weather.summary}")
     if request.home_team.starters_confirmed == 0 and request.away_team.starters_confirmed == 0:

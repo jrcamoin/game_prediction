@@ -9,6 +9,8 @@ class Sport(StrEnum):
     baseball = "baseball"
     hockey = "hockey"
     soccer = "soccer"
+    golf = "golf"
+    ufc = "ufc"
 
 
 class Plan(StrEnum):
@@ -27,6 +29,8 @@ class TeamInput(BaseModel):
     projected_starters: int = Field(5, ge=0, le=30)
     rest_days: int = Field(3, ge=0, le=14)
     moneyline: int | None = Field(None, ge=-5000, le=5000, description="American odds")
+    expected_value_for: float | None = Field(None, ge=0, le=20, description="Sport-specific expected output, such as soccer xG")
+    expected_value_against: float | None = Field(None, ge=0, le=20, description="Sport-specific expected output allowed")
 
     @field_validator("name")
     @classmethod
@@ -62,6 +66,7 @@ class PredictionRequest(BaseModel):
 class FactorBreakdown(BaseModel):
     rating: float
     advanced_rating: float = 0
+    expected_value: float = 0
     recent_form: float
     injuries: float
     lineup: float = 0
@@ -113,6 +118,24 @@ class DataSourceStatus(BaseModel):
     name: str
     enabled: bool
     detail: str
+
+
+class SportCapability(BaseModel):
+    sport: Sport
+    live_schedule: bool
+    live_state: bool
+    odds: bool
+    expected_value: bool
+    trained_model: bool
+    model_name: str
+    notes: list[str] = []
+
+
+class ModelStatus(BaseModel):
+    active_model: str
+    trained_artifact_path: str | None = None
+    trained_artifact_loaded: bool = False
+    capabilities: list[SportCapability]
 
 
 class TeamSnapshot(TeamInput):

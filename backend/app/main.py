@@ -1,10 +1,13 @@
 import random
 import csv
 import io
+from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator
 
-from fastapi import FastAPI, HTTPException, Response
+from fastapi import Depends, FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.auth import auth_enabled, require_session
 from app.data_sources import build_prediction_request_from_game, game_to_prediction_request, list_upcoming_games, resolve_game_result
 from app.models import (
     CommunityDashboard,
@@ -27,6 +30,7 @@ from app.models import (
     BettingValuePick,
     NotificationPreferences,
     ModelPerformanceReport,
+    ModelStatus,
     Plan,
     PremiumAnalysis,
     PremiumFeatureSet,
@@ -44,6 +48,7 @@ from app.models import (
     WeeklyChallenge,
 )
 from app.live import get_live_game_state
+from app.model_registry import model_status
 from app.predictor import predict_game
 from app.storage import (
     add_favorite,
@@ -78,10 +83,18 @@ from app.storage import (
     weekly_challenges,
 )
 
+
+@asynccontextmanager
+async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    init_db()
+    yield
+
+
 app = FastAPI(
     title="Sports Game Winner Predictor API",
     version="0.1.0",
     description="Transparent baseline API for predicting sports game winners.",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -93,14 +106,23 @@ app.add_middleware(
 )
 
 
-@app.on_event("startup")
-def startup() -> None:
-    init_db()
-
-
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/api/auth/session")
+def auth_session(session: dict[str, str] = Depends(require_session)) -> dict[str, str | bool]:
+    return {
+        "authenticated": True,
+        "auth_required": auth_enabled(),
+        **session,
+    }
+
+
+@app.get("/api/model/status", response_model=ModelStatus)
+def model_capabilities() -> ModelStatus:
+    return model_status()
 
 
 @app.post("/api/predict", response_model=PredictionResponse)
@@ -194,7 +216,10 @@ def simulate_season(sport: Sport = Sport.baseball, days: int = 30, simulations: 
 
 @app.post("/api/predict/live/{sport}/{game_id}", response_model=LivePredictionResponse)
 def predict_live_game(sport: Sport, game_id: str) -> LivePredictionResponse:
-    game = build_prediction_request_from_game(sport, game_id)
+    try:
+        game = build_prediction_request_from_game(sport, game_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     prediction = predict_game(game_to_prediction_request(game))
     save_live_prediction(game, prediction)
     return LivePredictionResponse(**prediction.model_dump(), game=game)
@@ -233,6 +258,8 @@ def game_result(sport: Sport, game_id: str) -> GameResult:
 
 @app.get("/api/live/{sport}/{game_id}", response_model=LiveGameState)
 def live_game_state(sport: Sport, game_id: str) -> LiveGameState:
+    if sport in {Sport.golf, Sport.ufc}:
+        raise HTTPException(status_code=404, detail=f"Live game state is not configured for {sport.value}.")
     return get_live_game_state(sport, game_id)
 
 
@@ -435,7 +462,10 @@ def premium_value_picks(user_id: int, sport: Sport = Sport.baseball, days: int =
 @app.get("/api/premium/analysis/{sport}/{game_id}", response_model=PremiumAnalysis)
 def premium_analysis(user_id: int, sport: Sport, game_id: str) -> PremiumAnalysis:
     _require_pro(user_id)
-    game = build_prediction_request_from_game(sport, game_id)
+    try:
+        game = build_prediction_request_from_game(sport, game_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     prediction = predict_game(game_to_prediction_request(game))
     value_pick = _value_pick_for_game(game, prediction)
     top_risks = [
