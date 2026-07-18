@@ -87,6 +87,13 @@ export type ModelStatus = {
   capabilities: SportCapability[];
 };
 
+export type AuthSession = {
+  authenticated: boolean;
+  auth_required: boolean;
+  mode: string;
+  subject: string;
+};
+
 export type TeamSnapshot = TeamInput & {
   id: string | null;
   abbreviation: string | null;

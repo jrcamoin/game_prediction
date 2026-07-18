@@ -12,3 +12,9 @@ services:
         value: 3.12.2
       - key: GAME_PREDICTOR_DB
         value: /var/data/game_predictor.sqlite3
+      - key: DATABASE_URL
+        sync: false
+      - key: APP_AUTH_TOKEN
+        sync: false
+      - key: XGBOOST_MODEL_PATH
+        sync: false

@@ -30,12 +30,29 @@ def trained_probability(factors: FactorBreakdown) -> float | None:
 
     model = artifact.get("model") if isinstance(artifact, dict) else artifact
     features = artifact.get("features", FEATURE_COLUMNS) if isinstance(artifact, dict) else FEATURE_COLUMNS
-    row = [_feature_values(factors)[feature] for feature in features]
+    values = _feature_values(factors)
+    row = [[values[feature] for feature in features]]
     try:
-        probability = model.predict_proba([row])[0][1]
+        try:
+            import pandas as pd
+
+            payload = pd.DataFrame(row, columns=features)
+        except ImportError:
+            payload = row
+        probability = model.predict_proba(payload)[0][1]
     except (AttributeError, IndexError, TypeError, ValueError):
         return None
     return float(probability)
+
+
+def trained_artifact_family() -> str | None:
+    artifact = _load_artifact()
+    if artifact is None:
+        return None
+    if isinstance(artifact, dict):
+        family = artifact.get("family")
+        return str(family) if family else "trained-tree"
+    return "trained-tree"
 
 
 @lru_cache(maxsize=1)

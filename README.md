@@ -9,7 +9,7 @@ The app includes:
 - SQLite-backed local profiles, favorites, prediction history, comments, contests, and premium prototype state.
 - First-class prediction support for football, basketball, baseball, hockey, soccer, golf, and UFC.
 - Optional soccer xG enrichment from StatsBomb open data.
-- File-backed golf matchup and UFC fight-card providers with sample fallbacks for local development.
+- ESPN-backed golf matchup and UFC fight-card providers with file and sample fallbacks for local development.
 - A stacked tree ensemble slot that can be replaced with a trained XGBoost artifact once historical training data is available.
 - A product-style dashboard shell with sport readiness, model status, account, community, premium, and history sections.
 - GitHub Actions CI for backend tests and frontend builds.
@@ -101,13 +101,20 @@ Remote mode fetches raw JSON from GitHub and should be treated as slower and les
 
 Manual predictions can also use the `expected_value_for` and `expected_value_against` team fields. For soccer, treat those as xG. For golf or UFC, use them as your sport-specific expected-output metric until dedicated provider adapters are added.
 
-## Optional Golf And UFC Feeds
+## Golf And UFC Feeds
 
-Golf and UFC now use file-backed schedule providers. If no file is configured, the backend exposes sample local matchups so the full real-game flow still works.
+Golf and UFC first try ESPN public scoreboard feeds. If ESPN is unavailable, they use file-backed providers. If no file is configured, the backend exposes sample local matchups so the full real-game flow still works.
 
 ```bash
 export GOLF_EVENTS_JSON=/path/to/golf-events.json
 export UFC_EVENTS_JSON=/path/to/ufc-events.json
+```
+
+To force local JSON/sample mode:
+
+```bash
+export GOLF_DISABLE_ESPN=1
+export UFC_DISABLE_ESPN=1
 ```
 
 Each JSON file may be a list or an object with an `events` list. Use fields like `id`, `date`, `name`, `home_name`, `away_name`, `home_rating`, `away_rating`, `home_moneyline`, `away_moneyline`, `home_expected_value_for`, and `away_expected_value_against`.
@@ -121,6 +128,13 @@ export APP_AUTH_TOKEN=change-me
 ```
 
 The current app exposes `GET /api/auth/session` as an integration point. Local development works without a token.
+
+Issue an expiring bearer session token:
+
+```bash
+curl -X POST 'http://localhost:8000/api/auth/token?subject=admin' \
+  -H "Authorization: Bearer $APP_AUTH_TOKEN"
+```
 
 ## Optional Trained XGBoost Model
 
@@ -139,6 +153,12 @@ pip install -r requirements-model.txt
 python scripts/train_xgboost.py --input data/training/win_features.csv --output artifacts/xgboost_win_model.joblib
 ```
 
+To build that CSV from completed ESPN-backed games:
+
+```bash
+python scripts/build_training_dataset.py --sports football,basketball,baseball,hockey,soccer --days 730 --output data/training/win_features.csv
+```
+
 The training CSV must include:
 
 ```text
@@ -147,6 +167,28 @@ lineup_edge, rest_edge, venue_edge, travel_edge, market_edge, weather_edge, home
 ```
 
 Set `XGBOOST_MODEL_PATH` after training so `/api/model/status` can report the artifact as active.
+
+On macOS, XGBoost may require OpenMP:
+
+```bash
+brew install libomp
+```
+
+If XGBoost cannot load, the trainer falls back to sklearn histogram gradient boosting and still writes a compatible tree artifact.
+
+## Postgres Migration
+
+SQLite remains the local default. For production Postgres:
+
+```bash
+cd backend
+source .venv/bin/activate
+pip install -r requirements-postgres.txt
+export DATABASE_URL=postgresql://user:password@host:5432/dbname
+python scripts/migrate_sqlite_to_postgres.py
+```
+
+The Postgres schema is in `backend/db/postgres_schema.sql`.
 
 ## Test And Build
 

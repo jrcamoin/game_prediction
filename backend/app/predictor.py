@@ -1,7 +1,7 @@
 from math import exp
 
 from app.models import FactorBreakdown, FeatureImportance, ModelPrediction, PredictionRequest, PredictionResponse, Sport, TeamInput
-from app.trained_model import trained_probability
+from app.trained_model import trained_artifact_family, trained_probability
 
 
 HOME_FIELD_BY_SPORT: dict[Sport, float] = {
@@ -70,6 +70,7 @@ def _ensemble_predictions(request: PredictionRequest, factors: FactorBreakdown) 
     )
     tree_score = _stacked_tree_score(request, factors)
     trained_tree_probability = trained_probability(factors)
+    trained_family = trained_artifact_family()
     market_weight = 0.28 if request.home_team.moneyline is not None and request.away_team.moneyline is not None else 0.12
     tree_weight = 0.22
     rating_weight = 0.38 if market_weight < 0.2 else 0.32
@@ -80,7 +81,7 @@ def _ensemble_predictions(request: PredictionRequest, factors: FactorBreakdown) 
         ModelPrediction(name="Market-aware", home_win_probability=round(_sigmoid(market_score), 4), weight=round(market_weight, 2)),
         ModelPrediction(name="Availability + context", home_win_probability=round(_sigmoid(availability_score), 4), weight=round(availability_weight, 2)),
         ModelPrediction(
-            name="Trained XGBoost stack" if trained_tree_probability is not None else "Stacked tree model",
+            name=f"Trained {trained_family} stack" if trained_tree_probability is not None and trained_family else "Stacked tree model",
             home_win_probability=round(trained_tree_probability if trained_tree_probability is not None else _sigmoid(tree_score), 4),
             weight=round(tree_weight, 2),
         ),

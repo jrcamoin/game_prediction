@@ -1,5 +1,6 @@
 import type {
   CommunityDashboard,
+  AuthSession,
   BettingValuePick,
   Contest,
   ContestEntry,
@@ -59,6 +60,17 @@ export async function fetchUpcomingGames(sport: Sport): Promise<GameSnapshot[]> 
 
 export async function fetchModelStatus(): Promise<ModelStatus> {
   const response = await fetch(`${API_BASE_URL}/api/model/status`);
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response));
+  }
+
+  return response.json();
+}
+
+export async function fetchAuthSession(token?: string): Promise<AuthSession> {
+  const response = await fetch(`${API_BASE_URL}/api/auth/session`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
   if (!response.ok) {
     throw new Error(await readErrorMessage(response));
   }

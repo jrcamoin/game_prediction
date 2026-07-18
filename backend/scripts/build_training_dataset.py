@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import argparse
 import csv
+import sys
 from pathlib import Path
+
+sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from app.data_sources import (
     _build_team_profiles,

@@ -1,13 +1,14 @@
 import random
 import csv
 import io
+import os
 from contextlib import asynccontextmanager
 from collections.abc import AsyncIterator
 
-from fastapi import Depends, FastAPI, HTTPException, Response
+from fastapi import Depends, FastAPI, Header, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.auth import auth_enabled, require_session
+from app.auth import auth_enabled, issue_session_token, require_session
 from app.data_sources import build_prediction_request_from_game, game_to_prediction_request, list_upcoming_games, resolve_game_result
 from app.models import (
     CommunityDashboard,
@@ -118,6 +119,14 @@ def auth_session(session: dict[str, str] = Depends(require_session)) -> dict[str
         "auth_required": auth_enabled(),
         **session,
     }
+
+
+@app.post("/api/auth/token")
+def auth_token(subject: str = "authenticated-user", authorization: str | None = Header(default=None)) -> dict[str, str | int]:
+    if auth_enabled() and authorization != f"Bearer {os.getenv('APP_AUTH_TOKEN')}":
+        raise HTTPException(status_code=403, detail="Static app token is required to issue a session token.")
+    ttl_seconds = 86400
+    return {"access_token": issue_session_token(subject, ttl_seconds), "token_type": "bearer", "expires_in": ttl_seconds}
 
 
 @app.get("/api/model/status", response_model=ModelStatus)

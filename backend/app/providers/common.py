@@ -4,6 +4,8 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 
 from app.models import DataSourceStatus, GameSnapshot, Sport, TeamSnapshot
 
@@ -21,6 +23,16 @@ def read_provider_json(path_value: str | None) -> list[dict[str, Any]]:
     if isinstance(payload, dict) and isinstance(payload.get("events"), list):
         return [item for item in payload["events"] if isinstance(item, dict)]
     return []
+
+
+def fetch_json_url(url: str) -> dict[str, Any]:
+    request = Request(url, headers={"User-Agent": "game-predictor/0.4"})
+    try:
+        with urlopen(request, timeout=10) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except (HTTPError, URLError, TimeoutError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
 
 
 def snapshot_from_record(record: dict[str, Any], prefix: str, source: str) -> TeamSnapshot:
